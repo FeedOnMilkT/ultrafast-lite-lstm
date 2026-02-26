@@ -11,9 +11,17 @@ class ParsingBaseline(nn.Module):
     Output shape: [B, griding_num + 1, num_rows, num_lanes]
     """
 
-    def __init__(self, griding_num: int, num_rows: int, num_lanes: int):
+    def __init__(
+        self,
+        griding_num: int,
+        num_rows: int,
+        num_lanes: int,
+        hidden_features: int = 2048,
+        pretrained_backbone: bool = True,
+    ):
         super().__init__()
-        backbone = models.resnet18(weights=None)
+        weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained_backbone else None
+        backbone = models.resnet18(weights=weights)
         self.encoder = nn.Sequential(
             backbone.conv1,
             backbone.bn1,
@@ -29,7 +37,7 @@ class ParsingBaseline(nn.Module):
 
         self.cls_dim = (griding_num + 1, num_rows, num_lanes)
         total_dim = self.cls_dim[0] * self.cls_dim[1] * self.cls_dim[2]
-        self.head = ClassificationHead(in_features=1800, hidden_features=1024, out_features=total_dim)
+        self.head = ClassificationHead(in_features=1800, hidden_features=hidden_features, out_features=total_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feat = self.encoder(x)
