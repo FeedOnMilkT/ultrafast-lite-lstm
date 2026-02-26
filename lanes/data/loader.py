@@ -3,6 +3,8 @@ from torch.utils.data import DataLoader
 from lanes.data.transforms import build_image_transform
 from lanes.data.tusimple_dataset import TusimpleTestDataset, TusimpleTrainDataset
 
+from lanes.data.constant import tusimple_row_anchor
+
 
 def build_train_loader(cfg):
     transform = build_image_transform(cfg.input_height, cfg.input_width)
@@ -13,6 +15,7 @@ def build_train_loader(cfg):
         num_rows=cfg.num_rows,
         num_lanes=cfg.num_lanes,
         dry_run=cfg.dry_run,
+        row_archor=tusimple_row_anchor
     )
     return DataLoader(
         dataset,
