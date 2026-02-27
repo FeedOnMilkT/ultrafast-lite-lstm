@@ -17,7 +17,7 @@ class BaselineConfig:
 
     # train
     epochs: int = 100
-    batch_size: int = 32
+    batch_size: int = 128
     optimizer: str = "Adam"
     learning_rate: float = 4e-4
     weight_decay: float = 1e-4
@@ -27,7 +27,7 @@ class BaselineConfig:
     gamma: float = 0.1
     warmup: str = "linear"
     warmup_iters: int = 100
-    num_workers: int = 0
+    num_workers: int = 32
     max_steps_per_epoch: Optional[int] = None
     seed: int = 3407
 

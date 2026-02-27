@@ -11,6 +11,7 @@ from time import perf_counter
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -36,6 +37,12 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="Use synthetic data")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--output-dir", type=str, default=None, help="Run root, e.g. outputs/baseline")
+    parser.add_argument(
+        "--save-every-epochs",
+        type=int,
+        default=10,
+        help="Save periodic checkpoints every N epochs on rank0 (<=0 disables periodic saves).",
+    )
     parser.add_argument("--auto-eval", action="store_true", help="Run evaluation after training on rank0")
     parser.add_argument("--eval-gt-file", type=str, default=None, help="GT jsonl file for Accuracy/FP/FN")
     parser.add_argument("--eval-output", type=str, default=None, help="Prediction output path")
@@ -102,8 +109,9 @@ def _compute_lr_factor(cfg, cur_iter: int, total_iters: int, milestones: list[in
         raise ValueError(f"unsupported scheduler: {cfg.scheduler}")
 
     warmup_name = str(cfg.warmup).lower() if cfg.warmup is not None else "none"
-    if warmup_name == "linear" and cfg.warmup_iters > 0 and cur_iter < cfg.warmup_iters:
-        factor *= float(cur_iter + 1) / float(cfg.warmup_iters)
+    if warmup_name == "linear":
+        if cfg.warmup_iters > 0 and cur_iter < cfg.warmup_iters:
+            factor *= float(cur_iter + 1) / float(cfg.warmup_iters)
     elif warmup_name not in ("none", ""):
         raise ValueError(f"unsupported warmup strategy: {cfg.warmup}")
     return factor
@@ -131,25 +139,30 @@ def _normalize_metrics(metrics):
 def _run_auto_eval(model, cfg, device, output_path: Path, gt_file: str | None, max_batches: int | None, logger):
     model.eval()
     loader = build_test_loader(cfg)
+    total_batches = len(loader) if max_batches is None else min(len(loader), max_batches)
     records = []
     infer_frames = 0
     infer_seconds = 0.0
-    with torch.no_grad():
-        for bidx, (images, names) in enumerate(loader):
-            images = images.to(device)
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            t0 = perf_counter()
-            logits = model(images)
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            infer_seconds += perf_counter() - t0
-            infer_frames += logits.shape[0]
-            for i in range(logits.shape[0]):
-                lanes = generate_tusimple_lines(logits[i], cfg.griding_num)
-                records.append(build_submit_record(names[i], lanes))
-            if max_batches is not None and bidx + 1 >= max_batches:
-                break
+    with tqdm(total=total_batches, desc="Auto-eval", dynamic_ncols=True, leave=False) as pbar:
+        with torch.no_grad():
+            for bidx, (images, names) in enumerate(loader):
+                images = images.to(device)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                t0 = perf_counter()
+                logits = model(images)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                infer_seconds += perf_counter() - t0
+                infer_frames += logits.shape[0]
+                for i in range(logits.shape[0]):
+                    lanes = generate_tusimple_lines(logits[i], cfg.griding_num)
+                    records.append(build_submit_record(names[i], lanes))
+                pbar.update(1)
+                fps = infer_frames / infer_seconds if infer_seconds > 0 else 0.0
+                pbar.set_postfix(frames=infer_frames, fps=f"{fps:.2f}")
+                if max_batches is not None and bidx + 1 >= max_batches:
+                    break
 
     dump_submit_records(records, str(output_path))
     metrics_map = {"Accuracy": float("nan"), "FP": float("nan"), "FN": float("nan")}
@@ -262,6 +275,15 @@ def main():
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
 
+            pbar = None
+            if rank == 0:
+                pbar = tqdm(
+                    total=steps_per_epoch,
+                    desc=f"Epoch {epoch + 1}/{cfg.epochs}",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+
             for step, (images, cls_label) in enumerate(train_loader):
                 global_step = epoch * steps_per_epoch + step
                 lr_factor = _compute_lr_factor(cfg, global_step, total_iters, milestones)
@@ -294,8 +316,26 @@ def main():
                         avg_rel,
                         avg_acc,
                     )
+                if pbar is not None:
+                    pbar.update(1)
+                    pbar.set_postfix(
+                        lr=f"{_current_lr(optimizer):.2e}",
+                        loss=f"{avg_total:.4f}",
+                        acc=f"{avg_acc:.4f}",
+                    )
                 if cfg.max_steps_per_epoch is not None and step + 1 >= cfg.max_steps_per_epoch:
                     break
+
+            if pbar is not None:
+                pbar.close()
+
+            if rank == 0:
+                model_to_save = model.module if isinstance(model, DDP) else model
+                if args.save_every_epochs > 0 and (epoch + 1) % args.save_every_epochs == 0:
+                    periodic_ckpt_path = run_dir / f"epoch_{epoch + 1:03d}.pth"
+                    save_checkpoint(str(periodic_ckpt_path), model_to_save, optimizer, epoch=epoch)
+                    if logger is not None:
+                        logger.info("periodic checkpoint saved: %s", periodic_ckpt_path)
 
         if rank == 0:
             model_to_save = model.module if isinstance(model, DDP) else model

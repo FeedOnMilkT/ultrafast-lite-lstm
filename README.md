@@ -12,6 +12,11 @@ python scripts/train_baseline.py --data-root <tusimple_root>
 
 # 4 GPUs (DDP)
 torchrun --nproc_per_node=4 scripts/train_baseline.py --data-root <tusimple_root>
+
+# periodic checkpoint every 10 epochs (default is 10)
+python scripts/train_baseline.py \
+  --data-root <tusimple_root> \
+  --save-every-epochs 10
 ```
 
 ## Auto Eval After Training
@@ -49,6 +54,7 @@ python scripts/eval_baseline.py \
   - `--batch-size`
   - `--max-steps`
   - `--output-dir`
+  - `--save-every-epochs` (default `10`, set `<=0` to disable periodic checkpoints)
 
 ## Dataset Prerequisites
 
@@ -60,3 +66,9 @@ python scripts/eval_baseline.py \
 
 - Each run creates a timestamp directory under `outputs/baseline/`.
 - Checkpoint file format: `baseline_YYYYMMDD_HHMMSS.pth`.
+- Periodic checkpoints are saved as `epoch_XXX.pth` every `--save-every-epochs` epochs.
+
+## Progress Bars
+
+- Training shows one progress bar per epoch on rank0.
+- Evaluation (`scripts/eval_baseline.py`) shows an inference progress bar with running frames/FPS.

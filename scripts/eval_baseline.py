@@ -6,6 +6,7 @@ from pathlib import Path
 from time import perf_counter
 
 import torch
+from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -82,25 +83,30 @@ def main():
     model.eval()
     params, flops = _estimate_params_and_flops(model, cfg, device)
     loader = build_test_loader(cfg)
+    total_batches = len(loader) if args.max_batches is None else min(len(loader), args.max_batches)
     records = []
     infer_frames = 0
     infer_seconds = 0.0
-    with torch.no_grad():
-        for bidx, (images, names) in enumerate(loader):
-            images = images.to(device)
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            t0 = perf_counter()
-            logits = model(images)
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            infer_seconds += perf_counter() - t0
-            infer_frames += logits.shape[0]
-            for i in range(logits.shape[0]):
-                lanes = generate_tusimple_lines(logits[i], cfg.griding_num)
-                records.append(build_submit_record(names[i], lanes))
-            if args.max_batches is not None and bidx + 1 >= args.max_batches:
-                break
+    with tqdm(total=total_batches, desc="Eval", dynamic_ncols=True, leave=False) as pbar:
+        with torch.no_grad():
+            for bidx, (images, names) in enumerate(loader):
+                images = images.to(device)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                t0 = perf_counter()
+                logits = model(images)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                infer_seconds += perf_counter() - t0
+                infer_frames += logits.shape[0]
+                for i in range(logits.shape[0]):
+                    lanes = generate_tusimple_lines(logits[i], cfg.griding_num)
+                    records.append(build_submit_record(names[i], lanes))
+                pbar.update(1)
+                fps = infer_frames / infer_seconds if infer_seconds > 0 else 0.0
+                pbar.set_postfix(frames=infer_frames, fps=f"{fps:.2f}")
+                if args.max_batches is not None and bidx + 1 >= args.max_batches:
+                    break
 
     dump_submit_records(records, args.output)
     print(f"prediction dumped: {args.output}, records={len(records)}")
