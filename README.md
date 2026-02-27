@@ -43,10 +43,18 @@ python scripts/train.py \
 
 ```bash
 python scripts/eval.py \
-  --data-root <tusimple_root> \
+  --data-root <tusimple_test_root> \
   --output-dir outputs \
-  --gt-file <path_to_gt_jsonl>
+  --gt-file <path_to_gt_jsonl> \
+  --num-workers 0
 ```
+
+## Eval Result Log
+
+- `scripts/eval.py` appends one json record per run:
+  - `outputs/eval_baseline_results.jsonl`
+  - `outputs/eval_lstm_results.jsonl`
+- Each record contains checkpoint path, data root, metrics (`Accuracy/FP/FN`), inference speed, params/FLOPs, and key runtime args.
 
 ## Hyperparameters
 
@@ -66,9 +74,44 @@ python scripts/eval.py \
 
 ## Dataset Prerequisites
 
-- `<tusimple_root>/train_gt.txt` and `<tusimple_root>/test.txt` must exist.
+- `<tusimple_train_root>/train_gt.txt` must exist (training path, usually `.../TUSimple/train_set`).
+- `<tusimple_test_root>/test.txt` must exist (evaluation path, usually `.../TUSimple/test_set`).
 - Entries referenced by those files must exist (image + mask path).
 - Use `scripts/convert_tusimple.py` first if your list/mask files are not prepared.
+
+## Visualization (TuSimple Images)
+
+Use `scripts/visualize_tusimple.py` to render lane overlays for report figures.
+
+```bash
+# GT + baseline + lstm triplet comparison
+python scripts/visualize_tusimple.py \
+  --data-root /home/uceeanz/datasets/tusimple/TUSimple/test_set \
+  --gt-file /home/uceeanz/datasets/tusimple/TUSimple/test_label.json \
+  --pred-file outputs/baseline/pred_baseline_epoch100_eval.jsonl \
+  --pred-label baseline \
+  --pred2-file outputs/lstm/pred_lstm_epoch100.jsonl \
+  --pred2-label lstm \
+  --out-dir outputs/vis_tusimple_report \
+  --num-samples 100 \
+  --sample-mode random \
+  --seed 3407
+```
+
+```bash
+# single model overlay (GT + one prediction file)
+python scripts/visualize_tusimple.py \
+  --data-root /home/uceeanz/datasets/tusimple/TUSimple/test_set \
+  --gt-file /home/uceeanz/datasets/tusimple/TUSimple/test_label.json \
+  --pred-file outputs/lstm/pred_lstm_epoch100.jsonl \
+  --pred-label lstm \
+  --out-dir outputs/vis_lstm_only \
+  --num-samples 50 \
+  --sample-mode first
+```
+
+- Rendered images are written to `--out-dir`.
+- `index.jsonl` is generated in `--out-dir` to map each output image to `raw_file`.
 
 ## Checkpoints
 
